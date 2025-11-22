@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport"
+            content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>Stickman Survival: God Mode</title>
+        <style>
+        body { margin: 0; overflow: hidden; background: #222; font-family: 'Courier New', Courier, monospace; touch-action: none; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; text-shadow: 1px 1px 0 #000; z-index: 10; }
+        #game-over { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0,0,0,0.9); padding: 40px; border: 4px solid white; z-index: 20; }
+        button { padding: 15px 30px; font-size: 1.5rem; cursor: pointer; background: #fff; border: none; font-family: inherit; margin-top: 20px; font-weight: bold; }
+        
+        /* Mobile Controls */
+        .touch-controls { display: none; position: absolute; bottom: 20px; width: 100%; height: 100px; pointer-events: none; z-index: 15; }
+        .dpad { position: absolute; left: 20px; bottom: 10px; width: 120px; height: 120px; pointer-events: auto; }
+        .action-btn { position: absolute; right: 20px; bottom: 10px; width: 90px; height: 90px; background: rgba(255,0,0,0.3); border-radius: 50%; border: 4px solid white; pointer-events: auto; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold; user-select: none; font-size: 20px;}
+        .action-btn:active { background: rgba(255,0,0,0.6); transform: scale(0.95); }
+
+        @media (max-width: 800px) {
+            .touch-controls { display: block; }
+        }
+    </style>
+    </head>
+    <body>
+
+        <div id="ui">
+            <h2 id="score" style="font-size: 24px;">Level: 1 | Kills: 0</h2>
+            <h3 id="hp" style="color: #0f0;">HP: 100%</h3>
+            <div id="weapon-ui">Weapon: Fists</div>
+        </div>
+
+        <div id="game-over">
+            <h1 style="color: red; font-size: 40px;">YOU DIED</h1>
+            <p id="final-score" style="font-size: 24px;">Kills: 0</p>
+            <button onclick="resetGame()">TRY AGAIN</button>
+        </div>
+
+        <div class="touch-controls">
+            <div id="touch-left" class="dpad"
+                style="left: 20px; bottom: 20px; width: 50%; height: 100%; pointer-events: auto;"></div>
+            <div id="touch-atk" class="action-btn">FIGHT</div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <script>
+// --- AUDIO SYSTEM ---
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioCtx();
+
+function playSound(type) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    const now = audioCtx.currentTime;
+    if (type === 'hit') {
+        // Satisfying heavy hit
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(100, now);
+        osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.2);
+        gainNode.gain.setValueAtTime(0.3, now);
+        gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+    } else if (type === 'powerup') {
+        // High pitched ping
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
+        gainNode.gain.setValueAtTime(0.3, now);
+        gainNode.gain.linearRampToValueAtTime(0, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } else if (type === 'swing') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.linearRampToValueAtTime(50, now + 0.1);
+        gainNode.gain.setValueAtTime(0.1, now);
+        gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+    }
+}
+
+// --- GAME SETUP ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let width, height;
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- GAME STATE ---
+let gameRunning = true;
+let score = 0;
+let level = 1;
+let frame = 0;
+let shake = 0;
+
+// --- CONTROLS ---
+const keys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, ArrowDown: false, " ": false };
+window.addEventListener('keydown', (e) => keys[e.key] = true);
+window.addEventListener('keyup', (e) => {
+    keys[e.key] = false;
+    if (e.key === " ") player.attackReleased = true; 
+});
+
+const touchLeft = document.getElementById('touch-left');
+const touchAtk = document.getElementById('touch-atk');
+let touchInput = { x: 0, y: 0 };
+
+touchLeft.addEventListener('touchstart', handleTouch);
+touchLeft.addEventListener('touchmove', handleTouch);
+touchLeft.addEventListener('touchend', () => touchInput = {x:0, y:0});
+function handleTouch(e) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = touchLeft.getBoundingClientRect();
+    const centerX = rect.left + rect.width/2;
+    if(touch.clientX < centerX) touchInput.x = -1;
+    else touchInput.x = 1;
+}
+touchAtk.addEventListener('touchstart', (e) => { e.preventDefault(); keys[" "] = true; });
+touchAtk.addEventListener('touchend', (e) => { e.preventDefault(); keys[" "] = false; player.attackReleased = true; });
+
+// --- CLASSES ---
+
+class Weapon {
+    constructor(name, range, damage, color, speed) {
+        this.name = name;
+        this.range = range;
+        this.damage = damage;
+        this.color = color;
+        this.speed = speed;
+    }
+}
+
+// BUFFED WEAPONS
+const WEAPONS = {
+    fist: new Weapon("Iron Fists", 50, 20, "none", 15), // Faster, longer reach
+    sword: new Weapon("Mega Sword", 80, 40, "#55f", 20),
+    spear: new Weapon("Long Pike", 120, 30, "#0f0", 25),
+    axe: new Weapon("God Axe", 70, 100, "#f00", 35) // One shot kill
+};
+
+class Entity {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.vx = 0;
+        this.vy = 0;
+        this.radius = 15;
+        this.hp = 100;
+        this.maxHp = 100;
+        this.direction = 1;
+        this.attacking = false;
+        this.attackTimer = 0;
+        this.hitStun = 0;
+        this.z = 0;
+        this.vz = 0;
+    }
+
+    update() {
+        if (this.hitStun > 0) {
+            this.hitStun--;
+            return;
+        }
+
+        this.x += this.vx;
+        this.y += this.vy;
+
+        if (this.z > 0 || this.vz > 0) {
+            this.z += this.vz;
+            this.vz -= 1;
+            if (this.z <= 0) {
+                this.z = 0;
+                this.vz = 0;
+            }
+        }
+
+        if (this.x < 0) this.x = 0;
+        if (this.x > width) this.x = width;
+        if (this.y < 100) this.y = 100;
+        if (this.y > height) this.y = height;
+        
+        if (this.attackTimer > 0) this.attackTimer--;
+    }
+
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y - this.z);
+        
+        // Shadow
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath();
+        ctx.ellipse(0, this.z, 15, 5, 0, 0, Math.PI*2);
+        ctx.fill();
+
+        if (this.hitStun > 0 && frame % 4 === 0) {
+             ctx.globalCompositeOperation = 'source-over';
+             ctx.fillStyle = 'white';
+        } else {
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+        }
+
+        ctx.beginPath();
+        const walk = (Math.abs(this.vx) + Math.abs(this.vy)) > 0 ? Math.sin(frame * 0.3) * 10 : 0;
+        ctx.moveTo(-5, 0); ctx.lineTo(-5 + walk, 20); 
+        ctx.moveTo(5, 0); ctx.lineTo(5 - walk, 20); 
+        ctx.moveTo(0, 0); ctx.lineTo(0, -25);
+        
+        let armX = 15 * this.direction;
+        let armY = -15;
+        if (this.attacking) {
+            armX = (this.weapon.range * 0.8) * this.direction;
+            armY = 0;
+        }
+
+        ctx.moveTo(0, -20); ctx.lineTo(armX, -20 + armY); 
+        ctx.moveTo(0, -25);
+        ctx.arc(0, -30, 8, 0, Math.PI*2);
+        ctx.stroke();
+        
+        if (this.weapon && this.weapon.name !== "Iron Fists") {
+            ctx.strokeStyle = this.weapon.color;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, -20);
+            ctx.lineTo(armX + (10*this.direction), -20 + armY);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+}
+
+class Player extends Entity {
+    constructor() {
+        super(width/2, height/2, "white");
+        this.speed = 5;
+        this.maxHp = 500; // MASSIVE HEALTH
+        this.hp = 500;
+        this.weapon = WEAPONS.fist;
+        this.attackReleased = true;
+    }
+
+    update() {
+        if (this.hitStun > 0) { super.update(); return; }
+
+        // REGENERATION
+        if(frame % 30 === 0 && this.hp < this.maxHp) {
+            this.hp += 2; // Heal over time
+        }
+
+        let moveX = 0; 
+        let moveY = 0;
+        if (keys.ArrowLeft || touchInput.x < 0) moveX = -1;
+        if (keys.ArrowRight || touchInput.x > 0) moveX = 1;
+        if (keys.ArrowUp) moveY = -1;
+        if (keys.ArrowDown) moveY = 1;
+
+        this.vx = moveX * this.speed;
+        this.vy = moveY * this.speed;
+        if (moveX !== 0) this.direction = moveX;
+
+        if (keys[" "] && this.attackTimer === 0 && this.attackReleased) {
+            this.attacking = true;
+            this.attackTimer = this.weapon.speed;
+            this.attackReleased = false;
+            playSound('swing');
+            checkCombat(this);
+        } else if (this.attackTimer < this.weapon.speed - 5) {
+            this.attacking = false;
+        }
+        super.update();
+    }
+}
+
+class Enemy extends Entity {
+    constructor(type) {
+        super(Math.random() * width, Math.random() > 0.5 ? height + 20 : 100, "#f55");
+        this.type = type;
+        // NERFED ENEMIES
+        if (type === 'wolf') {
+            this.speed = 3.0;
+            this.hp = 15; // Dies in 1 hit
+            this.damage = 5; // Low damage
+        } else {
+            this.speed = 1.0 + (Math.random());
+            this.hp = 30; // Dies in 2 punches or 1 weapon hit
+            this.damage = 3; // Very low damage
+            this.weapon = WEAPONS.fist;
+        }
+    }
+
+    update() {
+        if (this.hitStun > 0) { super.update(); return; }
+
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist > 30) {
+            this.vx = (dx / dist) * this.speed;
+            this.vy = (dy / dist) * this.speed;
+            this.direction = dx > 0 ? 1 : -1;
+        } else {
+            this.vx = 0; 
+            this.vy = 0;
+            if (this.attackTimer === 0) {
+                this.attacking = true;
+                this.attackTimer = 80; // Slower attacks
+                checkCombat(this);
+            }
+        }
+        if (this.attackTimer < 60) this.attacking = false;
+        super.update();
+    }
+
+    draw(ctx) {
+        if (this.type === 'wolf') {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.scale(this.direction, 1);
+            if (this.hitStun > 0) ctx.fillStyle = "white";
+            else ctx.fillStyle = "#a52a2a";
+            ctx.fillRect(-15, -15, 30, 15);
+            ctx.fillRect(10, -25, 15, 15);
+            const leg = (frame % 10 < 5) ? 5 : 0;
+            ctx.fillRect(-15, 0, 5, 10 + leg);
+            ctx.fillRect(5, 0, 5, 10 - leg);
+            ctx.restore();
+        } else {
+            super.draw(ctx);
+        }
+    }
+}
+
+class Particle {
+    constructor(x, y, color, isFire = false) {
+        this.x = x; this.y = y; this.color = color;
+        this.life = 1.0;
+        this.vx = (Math.random() - 0.5) * 8; // More explosion
+        this.vy = (Math.random() - 0.5) * 8;
+        this.isFire = isFire;
+        if(isFire) this.vy = -Math.random() * 3;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        this.life -= this.isFire ? 0.05 : 0.03;
+    }
+    draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.isFire ? 4 : 3, 0, Math.PI*2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+// --- OBJECTS ---
+let player = new Player();
+let enemies = [];
+let particles = [];
+let drops = [];
+let obstacles = [];
+
+function spawnObstacles() {
+    obstacles = [];
+    for(let i=0; i<3; i++) {
+        obstacles.push({
+            x: Math.random() * width,
+            y: 150 + Math.random() * (height-200),
+            r: 30
+        });
+    }
+}
+spawnObstacles();
+
+function spawnWave() {
+    enemies = [];
+    const count = 3 + level; // Fewer enemies adding up
+    for (let i = 0; i < count; i++) {
+        const type = (level > 2 && Math.random() > 0.8) ? 'wolf' : 'stick';
+        enemies.push(new Enemy(type));
+    }
+    updateUI();
+}
+spawnWave();
+
+function checkCombat(attacker) {
+    const targetList = attacker === player ? enemies : [player];
+    let range = attacker.weapon ? attacker.weapon.range : 30;
+    
+    targetList.forEach(target => {
+        const dx = target.x - attacker.x;
+        const dy = target.y - attacker.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const facing = (attacker.direction === 1 && dx > 0) || (attacker.direction === -1 && dx < 0);
+        
+        if (dist < range && facing) {
+            let dmg = attacker.weapon ? attacker.weapon.damage : 10;
+            if (attacker.type === 'wolf') dmg = 5; // Weak wolves
+            
+            target.hp -= dmg;
+            target.hitStun = 20; // Longer stun
+            target.vx = attacker.direction * 15; // Huge knockback
+            
+            spawnBlood(target.x, target.y - 20);
+            if (attacker === player) {
+                shake = 5;
+                playSound('hit');
+            }
+
+            if (target.hp <= 0) killEntity(target);
+        }
+    });
+}
+
+function spawnBlood(x, y) {
+    for(let i=0; i<15; i++) {
+        particles.push(new Particle(x, y, "red"));
+    }
+}
+
+function killEntity(target) {
+    if (target === player) {
+        gameRunning = false;
+        document.getElementById('game-over').style.display = 'block';
+        document.getElementById('final-score').innerText = "Kills: " + score;
+    } else {
+        // High loot chance
+        if (Math.random() > 0.7) {
+            const wps = [WEAPONS.sword, WEAPONS.spear, WEAPONS.axe];
+            const loot = wps[Math.floor(Math.random() * wps.length)];
+            drops.push({x: target.x, y: target.y, type: 'weapon', val: loot});
+        }
+        // Health potion chance
+        else if (Math.random() > 0.8) {
+             drops.push({x: target.x, y: target.y, type: 'health', val: 50});
+        }
+        
+        score++;
+        const index = enemies.indexOf(target);
+        if (index > -1) enemies.splice(index, 1);
+        
+        if (enemies.length === 0) {
+            level++;
+            spawnWave();
+            if(level % 3 === 0) spawnObstacles();
+        }
+        updateUI();
+    }
+}
+
+function updateUI() {
+    document.getElementById('score').innerText = `Level: ${level} | Kills: ${score}`;
+    const hpEl = document.getElementById('hp');
+    hpEl.innerText = `HP: ${Math.floor(player.hp)}`;
+    if(player.hp < 100) hpEl.style.color = "red";
+    else hpEl.style.color = "#0f0";
+}
+
+function resetGame() {
+    player = new Player();
+    level = 1;
+    score = 0;
+    spawnWave();
+    spawnObstacles();
+    gameRunning = true;
+    document.getElementById('game-over').style.display = 'none';
+    document.getElementById('weapon-ui').innerText = "Weapon: Fists";
+    drops = [];
+    loop();
+}
+
+function loop() {
+    if (!gameRunning) return;
+
+    ctx.fillStyle = "#222";
+    ctx.fillRect(0, 0, width, height);
+
+    if (shake > 0) {
+        ctx.save();
+        let dx = (Math.random() - 0.5) * shake;
+        let dy = (Math.random() - 0.5) * shake;
+        ctx.translate(dx, dy);
+        shake *= 0.9;
+        if(shake < 0.5) shake = 0;
+    }
+
+    obstacles.forEach(obs => {
+        ctx.fillStyle = "#444";
+        ctx.beginPath();
+        ctx.ellipse(obs.x, obs.y, obs.r, obs.r/2, 0, 0, Math.PI*2);
+        ctx.fill();
+        if (Math.random() > 0.5) {
+            particles.push(new Particle(obs.x + (Math.random()-0.5)*20, obs.y, "orange", true));
+        }
+        const dist = Math.sqrt((player.x - obs.x)**2 + (player.y - obs.y)**2);
+        if (dist < obs.r && frame % 60 === 0) {
+            player.hp -= 2; // Reduced fire damage
+            spawnBlood(player.x, player.y);
+            updateUI();
+            if(player.hp <= 0) killEntity(player);
+        }
+    });
+
+    // Drops
+    drops.forEach((d, i) => {
+        if(d.type === 'weapon') {
+            ctx.fillStyle = "yellow";
+            ctx.beginPath(); ctx.arc(d.x, d.y, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "white"; ctx.fillText(d.val.name, d.x - 20, d.y - 15);
+        } else {
+            ctx.fillStyle = "#0f0"; // Green Health Orb
+            ctx.beginPath(); ctx.arc(d.x, d.y, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "white"; ctx.fillText("+HP", d.x - 10, d.y - 15);
+        }
+
+        const dist = Math.sqrt((player.x - d.x)**2 + (player.y - d.y)**2);
+        if (dist < 40) {
+            if (d.type === 'weapon') {
+                player.weapon = d.val;
+                document.getElementById('weapon-ui').innerText = "Weapon: " + player.weapon.name;
+                document.getElementById('weapon-ui').style.color = player.weapon.color;
+            } else {
+                player.hp = Math.min(player.maxHp, player.hp + 50);
+                playSound('powerup');
+                updateUI();
+            }
+            drops.splice(i, 1);
+        }
+    });
+
+    const entities = [player, ...enemies].sort((a, b) => a.y - b.y);
+    entities.forEach(e => {
+        e.update();
+        e.draw(ctx);
+    });
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.update();
+        p.draw(ctx);
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (shake > 0) ctx.restore();
+    
+    // UI HP update
+    updateUI();
+
+    frame++;
+    requestAnimationFrame(loop);
+}
+
+loop();
+
+</script>
+    </body>
+</html>
