@@ -8,9 +8,21 @@
         <style>
         body { margin: 0; overflow: hidden; background: #222; font-family: 'Courier New', Courier, monospace; touch-action: none; }
         canvas { display: block; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; text-shadow: 1px 1px 0 #000; z-index: 10; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; text-shadow: 1px 1px 0 #000; z-index: 10; display: none; }
+        
+        /* Start Screen */
+        #start-screen { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0,0,0,0.95); padding: 60px 40px; border: 6px solid white; z-index: 30; max-width: 500px; }
+        #start-screen h1 { font-size: 48px; margin: 0 0 20px 0; color: #ff4444; text-shadow: 3px 3px 0 #000; }
+        #start-screen h2 { font-size: 24px; margin: 0 0 30px 0; color: #ffaa00; }
+        .controls-info { text-align: left; margin: 20px 0; padding: 20px; background: rgba(255,255,255,0.1); border-radius: 8px; }
+        .controls-info h3 { margin-top: 0; color: #4af; }
+        .controls-info p { margin: 8px 0; line-height: 1.6; }
+        .feature { color: #4f4; margin: 10px 0; }
+        
         #game-over { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0,0,0,0.9); padding: 40px; border: 4px solid white; z-index: 20; }
-        button { padding: 15px 30px; font-size: 1.5rem; cursor: pointer; background: #fff; border: none; font-family: inherit; margin-top: 20px; font-weight: bold; }
+        button { padding: 15px 40px; font-size: 1.5rem; cursor: pointer; background: #4af; color: white; border: none; font-family: inherit; margin-top: 20px; font-weight: bold; border-radius: 8px; transition: all 0.3s; }
+        button:hover { background: #6cf; transform: scale(1.05); }
+        button:active { transform: scale(0.95); }
         
         /* Mobile Controls */
         .touch-controls { display: none; position: absolute; bottom: 20px; width: 100%; height: 140px; pointer-events: none; z-index: 15; }
@@ -26,14 +38,41 @@
 
         @media (max-width: 800px) {
             .touch-controls { display: block; }
+            #start-screen { max-width: 90%; padding: 40px 20px; }
+            #start-screen h1 { font-size: 36px; }
         }
     </style>
     </head>
     <body>
 
+        <div id="start-screen">
+            <h1>⚔️ STICKMAN SURVIVAL ⚔️</h1>
+            <h2>GOD MODE EDITION</h2>
+
+            <div class="controls-info">
+                <h3>🎮 CONTROLS</h3>
+                <p><strong>Desktop:</strong> Arrow Keys = Move | Spacebar =
+                    Attack</p>
+                <p><strong>Mobile:</strong> D-Pad = Move | FIGHT Button =
+                    Attack</p>
+            </div>
+
+            <div class="controls-info">
+                <h3>💪 GOD MODE FEATURES</h3>
+                <p class="feature">✨ 500 HP + Health Regeneration</p>
+                <p class="feature">⚔️ Powerful Weapons (Sword, Spear, God
+                    Axe)</p>
+                <p class="feature">🔥 Massive Damage & Knockback</p>
+                <p class="feature">🎯 Weakened Enemies</p>
+                <p class="feature">💎 High Drop Rates</p>
+            </div>
+
+            <button onclick="startGame()">START GAME</button>
+        </div>
+
         <div id="ui">
             <h2 id="score" style="font-size: 24px;">Level: 1 | Kills: 0</h2>
-            <h3 id="hp" style="color: #0f0;">HP: 100%</h3>
+            <h3 id="hp" style="color: #0f0;">HP: 500</h3>
             <div id="weapon-ui">Weapon: Fists</div>
         </div>
 
@@ -41,6 +80,7 @@
             <h1 style="color: red; font-size: 40px;">YOU DIED</h1>
             <p id="final-score" style="font-size: 24px;">Kills: 0</p>
             <button onclick="resetGame()">TRY AGAIN</button>
+            <button onclick="backToMenu()">MAIN MENU</button>
         </div>
 
         <div class="touch-controls">
@@ -69,7 +109,6 @@ function playSound(type) {
 
     const now = audioCtx.currentTime;
     if (type === 'hit') {
-        // Satisfying heavy hit
         osc.type = 'square';
         osc.frequency.setValueAtTime(100, now);
         osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.2);
@@ -78,7 +117,6 @@ function playSound(type) {
         osc.start(now);
         osc.stop(now + 0.2);
     } else if (type === 'powerup') {
-        // High pitched ping
         osc.type = 'sine';
         osc.frequency.setValueAtTime(600, now);
         osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
@@ -110,7 +148,8 @@ window.addEventListener('resize', resize);
 resize();
 
 // --- GAME STATE ---
-let gameRunning = true;
+let gameRunning = false;
+let gameStarted = false;
 let score = 0;
 let level = 1;
 let frame = 0;
@@ -121,7 +160,7 @@ const keys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, ArrowDown: f
 window.addEventListener('keydown', (e) => keys[e.key] = true);
 window.addEventListener('keyup', (e) => {
     keys[e.key] = false;
-    if (e.key === " ") player.attackReleased = true; 
+    if (e.key === " " && player) player.attackReleased = true; 
 });
 
 const touchLeft = document.getElementById('arrow-left');
@@ -145,7 +184,7 @@ touchDown.addEventListener('touchstart', (e) => { e.preventDefault(); touchInput
 touchDown.addEventListener('touchend', (e) => { e.preventDefault(); touchInput.down = false; });
 
 touchAtk.addEventListener('touchstart', (e) => { e.preventDefault(); keys[" "] = true; });
-touchAtk.addEventListener('touchend', (e) => { e.preventDefault(); keys[" "] = false; player.attackReleased = true; });
+touchAtk.addEventListener('touchend', (e) => { e.preventDefault(); keys[" "] = false; if(player) player.attackReleased = true; });
 
 // --- CLASSES ---
 
@@ -161,10 +200,10 @@ class Weapon {
 
 // BUFFED WEAPONS
 const WEAPONS = {
-    fist: new Weapon("Iron Fists", 50, 20, "none", 15), // Faster, longer reach
+    fist: new Weapon("Iron Fists", 50, 20, "none", 15),
     sword: new Weapon("Mega Sword", 80, 40, "#55f", 20),
     spear: new Weapon("Long Pike", 120, 30, "#0f0", 25),
-    axe: new Weapon("God Axe", 70, 100, "#f00", 35) // One shot kill
+    axe: new Weapon("God Axe", 70, 100, "#f00", 35)
 };
 
 class Entity {
@@ -264,7 +303,7 @@ class Player extends Entity {
     constructor() {
         super(width/2, height/2, "white");
         this.speed = 5;
-        this.maxHp = 500; // MASSIVE HEALTH
+        this.maxHp = 500;
         this.hp = 500;
         this.weapon = WEAPONS.fist;
         this.attackReleased = true;
@@ -275,7 +314,7 @@ class Player extends Entity {
 
         // REGENERATION
         if(frame % 30 === 0 && this.hp < this.maxHp) {
-            this.hp += 2; // Heal over time
+            this.hp += 2;
         }
 
         let moveX = 0; 
@@ -306,15 +345,14 @@ class Enemy extends Entity {
     constructor(type) {
         super(Math.random() * width, Math.random() > 0.5 ? height + 20 : 100, "#f55");
         this.type = type;
-        // NERFED ENEMIES
         if (type === 'wolf') {
             this.speed = 3.0;
-            this.hp = 15; // Dies in 1 hit
-            this.damage = 5; // Low damage
+            this.hp = 15;
+            this.damage = 5;
         } else {
             this.speed = 1.0 + (Math.random());
-            this.hp = 30; // Dies in 2 punches or 1 weapon hit
-            this.damage = 3; // Very low damage
+            this.hp = 30;
+            this.damage = 3;
             this.weapon = WEAPONS.fist;
         }
     }
@@ -335,7 +373,7 @@ class Enemy extends Entity {
             this.vy = 0;
             if (this.attackTimer === 0) {
                 this.attacking = true;
-                this.attackTimer = 80; // Slower attacks
+                this.attackTimer = 80;
                 checkCombat(this);
             }
         }
@@ -366,7 +404,7 @@ class Particle {
     constructor(x, y, color, isFire = false) {
         this.x = x; this.y = y; this.color = color;
         this.life = 1.0;
-        this.vx = (Math.random() - 0.5) * 8; // More explosion
+        this.vx = (Math.random() - 0.5) * 8;
         this.vy = (Math.random() - 0.5) * 8;
         this.isFire = isFire;
         if(isFire) this.vy = -Math.random() * 3;
@@ -386,7 +424,7 @@ class Particle {
 }
 
 // --- OBJECTS ---
-let player = new Player();
+let player = null;
 let enemies = [];
 let particles = [];
 let drops = [];
@@ -402,18 +440,16 @@ function spawnObstacles() {
         });
     }
 }
-spawnObstacles();
 
 function spawnWave() {
     enemies = [];
-    const count = 3 + level; // Fewer enemies adding up
+    const count = 3 + level;
     for (let i = 0; i < count; i++) {
         const type = (level > 2 && Math.random() > 0.8) ? 'wolf' : 'stick';
         enemies.push(new Enemy(type));
     }
     updateUI();
 }
-spawnWave();
 
 function checkCombat(attacker) {
     const targetList = attacker === player ? enemies : [player];
@@ -427,11 +463,11 @@ function checkCombat(attacker) {
         
         if (dist < range && facing) {
             let dmg = attacker.weapon ? attacker.weapon.damage : 10;
-            if (attacker.type === 'wolf') dmg = 5; // Weak wolves
+            if (attacker.type === 'wolf') dmg = 5;
             
             target.hp -= dmg;
-            target.hitStun = 20; // Longer stun
-            target.vx = attacker.direction * 15; // Huge knockback
+            target.hitStun = 20;
+            target.vx = attacker.direction * 15;
             
             spawnBlood(target.x, target.y - 20);
             if (attacker === player) {
@@ -456,13 +492,11 @@ function killEntity(target) {
         document.getElementById('game-over').style.display = 'block';
         document.getElementById('final-score').innerText = "Kills: " + score;
     } else {
-        // High loot chance
         if (Math.random() > 0.7) {
             const wps = [WEAPONS.sword, WEAPONS.spear, WEAPONS.axe];
             const loot = wps[Math.floor(Math.random() * wps.length)];
             drops.push({x: target.x, y: target.y, type: 'weapon', val: loot});
         }
-        // Health potion chance
         else if (Math.random() > 0.8) {
              drops.push({x: target.x, y: target.y, type: 'health', val: 50});
         }
@@ -488,6 +522,22 @@ function updateUI() {
     else hpEl.style.color = "#0f0";
 }
 
+function startGame() {
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('ui').style.display = 'block';
+    gameStarted = true;
+    gameRunning = true;
+    player = new Player();
+    level = 1;
+    score = 0;
+    spawnWave();
+    spawnObstacles();
+    drops = [];
+    particles = [];
+    document.getElementById('weapon-ui').innerText = "Weapon: Iron Fists";
+    loop();
+}
+
 function resetGame() {
     player = new Player();
     level = 1;
@@ -496,9 +546,22 @@ function resetGame() {
     spawnObstacles();
     gameRunning = true;
     document.getElementById('game-over').style.display = 'none';
-    document.getElementById('weapon-ui').innerText = "Weapon: Fists";
+    document.getElementById('weapon-ui').innerText = "Weapon: Iron Fists";
     drops = [];
+    particles = [];
     loop();
+}
+
+function backToMenu() {
+    document.getElementById('game-over').style.display = 'none';
+    document.getElementById('ui').style.display = 'none';
+    document.getElementById('start-screen').style.display = 'block';
+    gameStarted = false;
+    gameRunning = false;
+    player = null;
+    enemies = [];
+    particles = [];
+    drops = [];
 }
 
 function loop() {
@@ -526,21 +589,20 @@ function loop() {
         }
         const dist = Math.sqrt((player.x - obs.x)**2 + (player.y - obs.y)**2);
         if (dist < obs.r && frame % 60 === 0) {
-            player.hp -= 2; // Reduced fire damage
+            player.hp -= 2;
             spawnBlood(player.x, player.y);
             updateUI();
             if(player.hp <= 0) killEntity(player);
         }
     });
 
-    // Drops
     drops.forEach((d, i) => {
         if(d.type === 'weapon') {
             ctx.fillStyle = "yellow";
             ctx.beginPath(); ctx.arc(d.x, d.y, 8, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = "white"; ctx.fillText(d.val.name, d.x - 20, d.y - 15);
         } else {
-            ctx.fillStyle = "#0f0"; // Green Health Orb
+            ctx.fillStyle = "#0f0";
             ctx.beginPath(); ctx.arc(d.x, d.y, 8, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = "white"; ctx.fillText("+HP", d.x - 10, d.y - 15);
         }
@@ -575,14 +637,15 @@ function loop() {
 
     if (shake > 0) ctx.restore();
     
-    // UI HP update
     updateUI();
 
     frame++;
     requestAnimationFrame(loop);
 }
 
-loop();
+// Initial render
+ctx.fillStyle = "#222";
+ctx.fillRect(0, 0, width, height);
 
 </script>
     </body>
